@@ -1,0 +1,19 @@
+- hosts: localhost
+  become: yes
+  tasks:
+  - name: Install docker
+    ansible.builtin.apt:
+      name: docker
+      update_cache: yes
+  - name: Install docker-compose
+    ansible.builtin.apt:
+      name: docker-compose
+      update_cache: yes
+  - name: Copy file
+    ansible.builtin.copy:
+      src: ./srv
+      dest: /
+  - name: Run command
+    ansible.builtin.command:
+      cmd: 'docker-compose up --build -d'
+      chdir: /srv

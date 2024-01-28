@@ -1,0 +1,184 @@
+version: '3'
+services:
+  nginx:
+    build:
+      context: nginx
+      dockerfile: Dockerfile
+    volumes:
+      - ./nginx/conf/conf.d:/etc/nginx/conf.d
+      - ./nginx/GeoIP:/usr/share/GeoIP
+      - ./nginx/logs:/var/log/nginx
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - 80:80
+    links:
+      - apache
+    depends_on:
+      - apache
+      - fluentd
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: 127.0.0.1:24224
+        tag: docker.nginx      
+    networks:
+      - default     
+      
+  apache:
+    build:
+      context: apache
+      dockerfile: Dockerfile
+    volumes:
+      - ./html:/var/www/html
+      - ./apache/conf/conf.d:/etc/apache2/conf.d
+      - ./apache/logs:/var/log/apache2
+    container_name: apache
+    restart: unless-stopped
+    networks:
+      - default
+      
+  fluentd:
+    build:
+      context: fluentd
+      dockerfile: Dockerfile
+    ports:
+      - 24224:24224
+      - 24224:24224/udp
+    container_name: fluentd
+    depends_on:
+      - mysql
+    networks:
+      - default
+      
+  mysql:
+    container_name: mysql
+    restart: unless-stopped
+    build:
+      context: mysql
+      dockerfile: Dockerfile
+    environment:
+      MYSQL_DATABASE: fluentd
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: admin
+    volumes:
+      - ./mysql/logs:/var/log/mysql
+    ports:
+      - 3306:3306
+    networks:
+      - default
+     
+  prometheus:
+    build:
+      context: prometheus
+      dockerfile: Dockerfile
+    ports:
+      - 9090:9090
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    restart: unless-stopped
+    container_name: prometheus
+    networks:
+      - default
+
+
+  grafana:
+    build:
+      context: grafana
+      dockerfile: Dockerfile
+    ports:
+      - 3000:3000
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/dashboards
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    container_name: grafana
+    networks:
+      - default
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor
+    ports:
+      - 4194:8080
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    container_name: cadvisor
+    
+  node-exporter: 
+    image: prom/node-exporter:latest 
+    container_name: node-exporter 
+    restart: unless-stopped 
+    volumes: 
+      - /proc:/host/proc:ro 
+      - /sys:/host/sys:ro 
+      - /:/rootfs:ro 
+    command: 
+      - '--path.procfs=/host/proc' 
+      - '--path.rootfs=/rootfs' 
+      - '--path.sysfs=/host/sys' 
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)' 
+    ports: 
+      - 9100:9100 
+    networks: 
+      - default
+   
+  nginx-exporter: 
+    image: nginx/nginx-prometheus-exporter:0.10.0 
+    container_name: nginx-exporter 
+    restart: unless-stopped
+    command: 
+      - '--nginx.scrape-uri=http://nginx:8080/metrics'
+      - '--web.telemetry-path=/metrics'
+    depends_on:
+      - nginx      
+    ports: 
+      - 9113:9113 
+    networks: 
+      - default
+      
+  mysqld-exporter:
+    image: prom/mysqld-exporter
+    container_name: mysqld-exporter
+    environment:
+      DATA_SOURCE_NAME: "admin:admin@tcp(db:3306)/fluentd"
+    command: 
+      - "--collect.global_status"
+      - "--collect.info_schema.innodb_metrics"
+      - "--collect.auto_increment.columns"
+      - "--collect.info_schema.processlist"
+      - "--collect.binlog_size"
+      - "--collect.info_schema.tablestats"
+      - "--collect.global_variables"
+      - "--collect.info_schema.query_response_time"
+      - "--collect.info_schema.userstats"
+      - "--collect.info_schema.tables"
+      - "--collect.perf_schema.tablelocks"
+      - "--collect.perf_schema.file_events"
+      - "--collect.perf_schema.eventswaits"
+      - "--collect.perf_schema.indexiowaits"
+      - "--collect.perf_schema.tableiowaits"
+    depends_on:
+      - mysql
+    volumes:
+      - ./mysql-exporter/.my.cnf:/.my.cnf
+    ports:
+      - 9104:9104
+    networks:
+      - default    
+  
+
+networks:
+  default:
+      driver: bridge
